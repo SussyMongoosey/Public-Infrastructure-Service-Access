@@ -14,32 +14,11 @@ VZ_BASE = "https://cstm.rivm.nl/vzinfo/custom-vzinfo-data/maps"
 OVERPASS = "https://overpass-api.de/api/interpreter"
 HEADERS = {"User-Agent": "PISA thesis data gathering; Netherlands health service layers"}
 COLS = [
-    "facility_id",
-    "layer",
-    "name",
-    "latitude",
-    "longitude",
-    "address",
-    "city",
-    "postcode",
-    "source",
-    "source_detail",
-    "collaboration",
-    "osm_type",
-    "osm_id",
-    "amenity",
-    "healthcare",
-    "healthcare_speciality",
-    "operator",
-    "phone",
-    "website",
-    "rd_x",
-    "rd_y",
-    "hospital_type",
-
-    "osm_match_reason",
-    "osm_match_score"
+    "facility_id", "layer", "name", "latitude", "longitude", "address", "city", "postcode",
+    "source", "source_detail", "collaboration", "osm_type", "osm_id", "amenity", "healthcare",
+    "healthcare_speciality", "operator", "phone", "website", "rd_x", "rd_y", "hospital_type",
 ]
+
 
 def overpass(query: str) -> list[dict]:
     response = requests.post(OVERPASS, data={"data": query}, headers=HEADERS, timeout=360)
@@ -63,75 +42,6 @@ def address(tags: dict) -> str:
         tags.get("addr:city") or tags.get("addr:place") or "",
     ] if x)
 
-import re
-
-def determine_match(tags: dict) -> tuple[str, int]:
-
-    reasons = []
-    score = 0
-
-    name = (tags.get("name") or "").lower()
-    operator = (tags.get("operator") or "").lower()
-
-    amenity = tags.get("amenity","")
-    healthcare = tags.get("healthcare","")
-    speciality = tags.get("healthcare:speciality","").lower()
-
-
-    if amenity == "doctors":
-        reasons.append("amenity=doctors")
-        score += 5
-
-
-    if healthcare == "doctor":
-        reasons.append("healthcare=doctor")
-        score += 5
-
-
-    if "general" in speciality:
-        reasons.append("speciality=general")
-        score += 3
-
-
-    if "general_practitioner" in speciality:
-        reasons.append("speciality=general_practitioner")
-        score += 4
-
-
-    if "huisarts" in speciality:
-        reasons.append("speciality=huisarts")
-        score += 4
-
-
-    if re.search(
-        r"huisarts|huisartsen|huisartsenpraktijk|huisartspraktijk",
-        name
-    ):
-        reasons.append("name_huisarts")
-        score += 4
-
-
-    if re.search(
-        r"gezondheidscentrum|medisch centrum",
-        name
-    ):
-        reasons.append("name_medical_center")
-        score += 1
-
-
-    if re.search(
-        r"huisarts|huisartsen",
-        operator
-    ):
-        reasons.append("operator_huisarts")
-        score += 2
-
-
-    if not reasons:
-        reasons.append("unknown")
-
-
-    return ";".join(reasons), score
 
 def osm_rows(elements: list[dict], layer: str, source_detail: str) -> pd.DataFrame:
     rows = []
@@ -140,9 +50,6 @@ def osm_rows(elements: list[dict], layer: str, source_detail: str) -> pd.DataFra
         if lat is None or lon is None:
             continue
         tags = element.get("tags") or {}
-
-        match_reason, match_score = determine_match(tags)
-
         rows.append({
             "facility_id": f"osm:{element.get('type')}:{element.get('id')}",
             "layer": layer,
@@ -162,8 +69,6 @@ def osm_rows(elements: list[dict], layer: str, source_detail: str) -> pd.DataFra
             "operator": tags.get("operator") or "",
             "phone": tags.get("phone") or tags.get("contact:phone") or "",
             "website": tags.get("website") or tags.get("contact:website") or "",
-            "osm_match_reason": match_reason,
-            "osm_match_score": match_score,
         })
     return pd.DataFrame(rows).drop_duplicates(subset=["facility_id"])
 
@@ -240,28 +145,12 @@ def fetch_gp() -> pd.DataFrame:
     query = '''
 [out:json][timeout:240];
 area["ISO3166-1"="NL"][admin_level=2]->.nl;
-
 (
-  /* Core doctor tags */
   nwr["amenity"="doctors"](area.nl);
   nwr["healthcare"="doctor"](area.nl);
-
-  /* Broader outpatient facilities that may contain GP practices */
-  nwr["amenity"="clinic"](area.nl);
-  nwr["healthcare"="clinic"](area.nl);
-  nwr["healthcare"="centre"](area.nl);
-
-  /* Speciality tags */
-  nwr["healthcare:speciality"~"(^|;)general(;|$)|general_practitioner|family_medicine|huisarts",i](area.nl);
-
-  /* Dutch / English GP name patterns */
-  nwr["name"~"huisarts|huisartsen|huisartsenpraktijk|huisartspraktijk|praktijk voor huisarts|gezondheidscentrum|medisch centrum|medical centre|general practitioner|family doctor|gp practice",i](area.nl);
-
-  /* Sometimes useful non-name fields */
-  nwr["operator"~"huisarts|huisartsen|gezondheidscentrum|medisch centrum|general practitioner|gp practice",i](area.nl);
-  nwr["description"~"huisarts|huisartsen|general practitioner|family doctor|gp practice",i](area.nl);
+  nwr["healthcare:speciality"~"general_practitioner|huisarts",i](area.nl);
+  nwr["name"~"huisarts|huisartsen|huisartsenpraktijk",i](area.nl);
 );
-
 out center tags;
 '''
     df = osm_rows(overpass(query), "general_practitioner", "OSM GP/huisarts tags and name match")
